@@ -1,9 +1,12 @@
 import 'dart:collection';
 import 'dart:ui';
+import 'dart:collection';
+import 'package:collection/collection.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:path_drawing/path_drawing.dart';
 import 'package:vector_math/vector_math_64.dart';
+import 'package:xml/xml.dart';
 import 'package:xml/xml_events.dart' hide parseEvents;
 
 import '../svg/theme.dart';
@@ -876,23 +879,68 @@ class SvgParserState {
   /// Drive the [XmlTextReader] to EOF and produce a [DrawableRoot].
   Future<DrawableRoot> parse() async {
     _compatibilityTester = _SvgCompatibilityTester();
+
+    final Map<String, List<XmlEventAttribute>> styleClasses = {};
+    bool styleRead = false;
     for (XmlEvent event in _readSubtree()) {
       if (event is XmlStartElementEvent) {
+        var className =
+            event.attributes.firstWhereOrNull((e) => e.name == 'class')?.value;
+
+        print(className);
+        if (styleClasses[className] != null) {
+          for (var element in styleClasses[className]!) {
+            print("add attribute ${element.name} == ${element.value}");
+            _currentAttributes[element.name] = element.value;
+          }
+        }
         if (startElement(event)) {
           continue;
         }
-        final _ParseFunc? parseFunc = _svgElementParsers[event.name];
-        await parseFunc?.call(this, _warningsAsErrors);
-        if (parseFunc == null) {
-          if (!event.isSelfClosing) {
-            _discardSubtree();
+        if (event.name == 'style') {
+          styleRead = true;
+        } else {
+          final _ParseFunc? parseFunc = _svgElementParsers[event.name];
+          await parseFunc?.call(this, _warningsAsErrors);
+          if (parseFunc == null) {
+            if (!event.isSelfClosing) {
+              _discardSubtree();
+            }
+            assert(() {
+              unhandledElement(event);
+              return true;
+            }());
           }
-          assert(() {
-            unhandledElement(event);
-            return true;
-          }());
+        }
+      } else if (event is XmlTextEvent) {
+        if (styleRead) {
+          final RegExp classesRegex = RegExp(r'\..*?\{.*?}');
+          final String noSpaceString = event.text.replaceAll(' ', '');
+          final clasesMatch = classesRegex.allMatches(noSpaceString);
+          for (final RegExpMatch regMatch in clasesMatch) {
+            var match = noSpaceString.substring(regMatch.start, regMatch.end);
+            var name = match.split('{')[0].replaceAll('.', '');
+            var fields = match.split('{')[1].replaceAll('}', '').split(';');
+
+            final List<XmlEventAttribute> attributes = [];
+            for (final String field in fields) {
+              final List<String> d = field.split(':');
+              if (d.length == 2) {
+                attributes.add(
+                  XmlEventAttribute(
+                    d[0],
+                    d[1],
+                    XmlAttributeType.SINGLE_QUOTE,
+                  ),
+                );
+              }
+            }
+            styleClasses[name] = attributes;
+          }
         }
       } else if (event is XmlEndElementEvent) {
+        styleRead = false;
+
         endElement(event);
       }
     }
@@ -1003,25 +1051,8 @@ class SvgParserState {
       // Throw error instead of log warning.
       throw UnimplementedError(errorMessage);
     }
-    if (event.name == 'style') {
-      FlutterError.reportError(FlutterErrorDetails(
-        exception: UnimplementedError(
-            'The <style> element is not implemented in this library.'),
-        informationCollector: () => <DiagnosticsNode>[
-          ErrorDescription(
-              'Style elements are not supported by this library and the requested SVG may not '
-              'render as intended.'),
-          ErrorHint(
-              'If possible, ensure the SVG uses inline styles and/or attributes (which are '
-              'supported), or use a preprocessing utility such as svgcleaner to inline the '
-              'styles for you.'),
-          ErrorDescription(''),
-          DiagnosticsProperty<String>('Picture key', _key),
-        ],
-        library: 'SVG',
-        context: ErrorDescription('in parseSvgElement'),
-      ));
-    } else if (_unhandledElements.add(event.name)) {
+
+    if (_unhandledElements.add(event.name)) {
       print(errorMessage);
     }
   }
