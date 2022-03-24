@@ -887,10 +887,8 @@ class SvgParserState {
         var className =
             event.attributes.firstWhereOrNull((e) => e.name == 'class')?.value;
 
-        print(className);
         if (styleClasses[className] != null) {
           for (var element in styleClasses[className]!) {
-            print("add attribute ${element.name} == ${element.value}");
             _currentAttributes[element.name] = element.value;
           }
         }
